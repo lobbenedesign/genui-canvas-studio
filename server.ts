@@ -69,7 +69,7 @@ const server = Bun.serve({
         let body: any = {};
         try { body = await req.json(); } catch {}
         const prompt = body.prompt || "Crea un calcolatore di mutuo interattivo con slider";
-        const component = compiler.compileComponent(prompt);
+        const component = await compiler.compileComponent(prompt);
         return new Response(JSON.stringify(component), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
