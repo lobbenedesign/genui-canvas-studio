@@ -1,0 +1,11 @@
+{
+  "name": "genui-canvas-studio",
+  "version": "1.0.0",
+  "description": "Infinite Generative UI Canvas & Real-Time Streaming Component Studio (v0 & OpenUI Style)",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "start": "bun server.ts"
+  },
+  "dependencies": {}
+}
