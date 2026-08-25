@@ -22,13 +22,15 @@ export class GenUICompetitorBenchmark {
   public getComparison(): GenUICompetitor[] {
     return [
       {
+        // Honest self-assessment: single active preview pane (no infinite canvas or
+        // multi-component workspace yet), React (TSX) + raw HTML export only (no Vue).
         name: "🎨 GenUI-Canvas Studio (Our Software)",
-        infiniteCanvas: true,
+        infiniteCanvas: false,
         liveIframeSandbox: true,
         localOfflineRunning: true,
-        exportReactVueHTML: true,
+        exportReactVueHTML: false,
         costMonthly: "$0.00 (Local Bun)",
-        multiComponentWorkspace: true
+        multiComponentWorkspace: false
       },
       {
         name: "v0.dev (Vercel)",

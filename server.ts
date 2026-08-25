@@ -58,8 +58,8 @@ const server = Bun.serve({
       return new Response(JSON.stringify({
         status: "online",
         version: "1.0.0-genui",
-        canvasMode: "infinite-interactive-grid",
-        exportEngines: ["React (TSX)", "Vue 3", "Tailwind HTML5"]
+        canvasMode: "single-preview-sandbox",
+        exportEngines: ["React (TSX)", "Standalone HTML5/CSS3/JS"]
       }), { headers });
     }
 

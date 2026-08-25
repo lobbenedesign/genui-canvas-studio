@@ -47,7 +47,7 @@ Rispondi con un JSON valido:
             stream: false,
             format: "json"
           }),
-          signal: AbortSignal.timeout(8000)
+          signal: AbortSignal.timeout(45000)
         });
 
         if (res.ok) {

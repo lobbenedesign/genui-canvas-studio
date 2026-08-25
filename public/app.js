@@ -54,7 +54,7 @@ function setupGenUIActions() {
       metaBox.innerHTML = `
         <strong style="color: #fff;">Component:</strong> ${data.name}<br>
         <strong style="color: #fff;">Category:</strong> <span style="color: #c084fc; text-transform: uppercase;">${data.category}</span><br>
-        <strong style="color: #fff;">Frameworks:</strong> React (TSX), Vue 3, HTML5/CSS3<br>
+        <strong style="color: #fff;">Frameworks:</strong> React (TSX), Standalone HTML5/CSS3<br>
         <strong style="color: #fff;">Interactivity:</strong> Live State Reactive Events Active
       `;
 
