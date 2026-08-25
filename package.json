@@ -9,6 +9,7 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@vue/compiler-sfc": "^3.5.41"
+    "@vue/compiler-sfc": "^3.5.41",
+    "svelte": "^5.56.10"
   }
 }

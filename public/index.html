@@ -24,7 +24,7 @@
         <div class="topbar-chips">
           <span class="chip chip-genui">🖼️ Prompt-to-Component Studio</span>
           <span class="chip chip-sandbox">⚡ Live Iframe Sandbox: Active</span>
-          <span class="chip chip-react">⚛️ React (TSX) + Vue 3 SFC + HTML Export</span>
+          <span class="chip chip-react">⚛️ React + Vue 3 + Svelte 5 + HTML Export</span>
           <span class="chip chip-competitors">📊 Comparison Table</span>
         </div>
       </div>
@@ -59,6 +59,15 @@
             <div class="component-meta-card" id="comp-meta-box">
               <!-- Dynamically populated -->
             </div>
+            <div class="panel-header" style="margin-top: 6px;">
+              <span class="panel-title">🔁 Iterative Refinement (real edit, not regeneration)</span>
+            </div>
+            <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+              <label class="form-label">Give a follow-up instruction to edit the CURRENT component (e.g. "make the button blue", "add a delete button"):</label>
+              <textarea id="input-refine-instruction" class="form-control" rows="2" placeholder="es. rendi lo sfondo del display verde e aggiungi un pulsante Annulla" disabled></textarea>
+              <button class="btn btn-primary" id="btn-refine-ui" style="background:#a855f7;" disabled>🔁 Apply Refinement to Current Component</button>
+              <div id="refine-history" class="refine-history"></div>
+            </div>
           </div>
 
           <!-- Right: Interactive Live Sandbox Iframe -->
@@ -82,6 +91,7 @@
             <div style="display:flex; gap:8px;">
               <button class="btn btn-primary" id="btn-copy-code">📋 Copy React Component</button>
               <button class="btn btn-primary" id="btn-copy-vue-code" style="background:#42b883;">📋 Copy Vue 3 SFC</button>
+              <button class="btn btn-primary" id="btn-copy-svelte-code" style="background:#ff3e00;">📋 Copy Svelte 5 Component</button>
             </div>
           </div>
           <pre class="code-terminal" id="code-export-view">// Source code will appear here...</pre>

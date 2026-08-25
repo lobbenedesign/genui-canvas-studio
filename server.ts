@@ -16,9 +16,10 @@ const benchmark = new GenUICompetitorBenchmark();
 
 console.log(`\n======================================================`);
 console.log(`🎨 GENUI-CANVAS STUDIO running on http://localhost:${PORT}`);
-console.log(`🖼️ Infinite 2D Component Workspace: Ready`);
+console.log(`🖼️ Single-Preview Component Sandbox: Ready`);
 console.log(`⚡ Sandboxed Iframe Live Interactive Compiler: Online`);
-console.log(`📦 Multi-Framework Exporter (React/Vue/HTML5): Active`);
+console.log(`🔁 Real Iterative Refinement (LLM-edits-prior-code): Active`);
+console.log(`📦 Multi-Framework Exporter (React/Vue 3/Svelte 5/HTML5): Active`);
 console.log(`======================================================\n`);
 
 const server = Bun.serve({
@@ -59,7 +60,8 @@ const server = Bun.serve({
         status: "online",
         version: "1.0.0-genui",
         canvasMode: "single-preview-sandbox",
-        exportEngines: ["React (TSX)", "Vue 3 SFC (compiler-verified)", "Standalone HTML5/CSS3/JS"]
+        exportEngines: ["React (TSX)", "Vue 3 SFC (compiler-verified)", "Svelte 5 (compiler-verified)", "Standalone HTML5/CSS3/JS"],
+        refinement: "real-llm-conditioned-edit"
       }), { headers });
     }
 
@@ -71,6 +73,23 @@ const server = Bun.serve({
         const prompt = body.prompt || "Crea un calcolatore di mutuo interattivo con slider";
         const component = await compiler.compileComponent(prompt);
         return new Response(JSON.stringify(component), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // 2b. Refine Component (real iterative edit of the previous output, not a re-generation)
+    if (url.pathname === "/api/genui/refine" && req.method === "POST") {
+      try {
+        let body: any = {};
+        try { body = await req.json(); } catch {}
+        const current = body.current;
+        const instruction = body.instruction;
+        if (!current || !current.htmlCode) {
+          return new Response(JSON.stringify({ error: "Missing 'current' component to refine." }), { status: 400, headers });
+        }
+        const refined = await compiler.refineComponent(current, instruction);
+        return new Response(JSON.stringify(refined), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }

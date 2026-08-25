@@ -5,6 +5,7 @@
  */
 
 import { toVueSFC } from "./vue_exporter";
+import { toSvelteComponent } from "./svelte_exporter";
 
 export interface GeneratedUIComponent {
   componentId: string;
@@ -16,6 +17,7 @@ export interface GeneratedUIComponent {
   fullBundleHtml: string;
   reactCode: string;
   vueCode?: string;
+  svelteCode?: string;
   generationSource: string;
 }
 
@@ -29,7 +31,102 @@ export class GenUICompiler {
     // component ended up with (Ollama-generated or procedurally synthesized) —
     // see src/vue_exporter.ts. Compiler-verified in src/verify_vue_export.ts.
     component.vueCode = toVueSFC(component);
+    // Real Svelte 5 component export, same source data — see src/svelte_exporter.ts.
+    // Compiler-verified in src/verify_svelte_export.ts.
+    component.svelteCode = toSvelteComponent(component);
     return component;
+  }
+
+  /**
+   * Real iterative refinement, the pattern used by v0.dev and bolt.new: instead of
+   * regenerating a component from scratch, the LLM is given the CURRENT htmlCode/
+   * cssCode/jsCode plus a follow-up instruction ("make the button blue", "add a
+   * delete button") and asked to return the full updated component reflecting only
+   * that edit. This genuinely conditions on the previous output rather than starting
+   * from a blank prompt again.
+   *
+   * Honest constraints:
+   * - This requires a live local Ollama model. There is no procedural-synthesizer
+   *   fallback for refinement (unlike first-time generation) because a fallback here
+   *   could only fake an edit (e.g. via a hardcoded regex for "make it blue"), which
+   *   would not generalize to arbitrary instructions and would misrepresent itself as
+   *   real editing. If no Ollama model is available, this throws instead of pretending.
+   * - Uses the same 45s timeout established for real local generation.
+   */
+  public async refineComponent(
+    current: { name: string; category: string; htmlCode: string; cssCode: string; jsCode: string },
+    instruction: string
+  ): Promise<GeneratedUIComponent> {
+    const trimmedInstruction = (instruction || "").trim();
+    if (!trimmedInstruction) throw new Error("Refinement instruction is empty.");
+
+    const activeModel = await this.getAvailableOllamaModel();
+    if (!activeModel) {
+      throw new Error(
+        "No local Ollama model is available for refinement. Real iterative editing requires a running local model (there is no fake/procedural fallback for edits)."
+      );
+    }
+
+    const refinePrompt = `Sei un esperto frontend developer. Di seguito trovi un componente HTML5/CSS3/JavaScript GIA' ESISTENTE e un'istruzione di modifica da un utente. Il tuo compito e' applicare SOLO la modifica richiesta, mantenendo intatto tutto il resto della struttura, degli id, delle classi e della logica esistente, a meno che l'istruzione non richieda esplicitamente di cambiarli.
+
+COMPONENTE ATTUALE (nome: "${current.name}", categoria: "${current.category}"):
+--- HTML ---
+${current.htmlCode}
+--- CSS ---
+${current.cssCode}
+--- JS ---
+${current.jsCode}
+--- FINE COMPONENTE ATTUALE ---
+
+ISTRUZIONE DI MODIFICA DELL'UTENTE: "${trimmedInstruction}"
+
+Rispondi con un JSON valido contenente il componente COMPLETO e AGGIORNATO (non solo il diff):
+{
+  "name": "Nome Componente",
+  "category": "calculator|dashboard|form|widget|chart|timer|ecommerce|kanban|game|converter",
+  "htmlCode": "<div class='card'>...</div>",
+  "cssCode": "body { ... }",
+  "jsCode": "...",
+  "reactCode": "export function Component() { ... }"
+}`;
+
+    const res = await fetch(`${this.ollamaHost}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: activeModel,
+        prompt: refinePrompt,
+        stream: false,
+        format: "json"
+      }),
+      signal: AbortSignal.timeout(45000)
+    });
+
+    if (!res.ok) {
+      throw new Error(`Ollama refinement request failed with status ${res.status}.`);
+    }
+
+    const data = await res.json();
+    const parsed = JSON.parse(data.response || "{}");
+    if (!parsed.htmlCode || !parsed.cssCode) {
+      throw new Error("Ollama returned an incomplete refinement (missing htmlCode/cssCode).");
+    }
+
+    const bundle = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${parsed.cssCode}</style></head><body>${parsed.htmlCode}<script>${parsed.jsCode || ""}<\/script></body></html>`;
+    const refined: GeneratedUIComponent = {
+      componentId: `COMP-${Date.now().toString().slice(-4)}`,
+      name: parsed.name || current.name,
+      category: parsed.category || (current.category as any) || "widget",
+      htmlCode: parsed.htmlCode,
+      cssCode: parsed.cssCode,
+      jsCode: parsed.jsCode || "",
+      fullBundleHtml: bundle,
+      reactCode: parsed.reactCode || `export function CustomUI() { return <div>${parsed.name || current.name}</div>; }`,
+      generationSource: `Local Ollama (${activeModel}) — refined: "${trimmedInstruction.slice(0, 60)}"`
+    };
+    refined.vueCode = toVueSFC(refined);
+    refined.svelteCode = toSvelteComponent(refined);
+    return refined;
   }
 
   private async compileComponentInner(prompt: string): Promise<GeneratedUIComponent> {

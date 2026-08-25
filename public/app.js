@@ -5,6 +5,7 @@
  */
 
 let currentComponent = null;
+let refinementHistory = [];
 
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
@@ -33,10 +34,39 @@ function setupGenUIActions() {
   const btnPreset = document.getElementById("btn-preset-telemetry");
   const btnCopy = document.getElementById("btn-copy-code");
   const btnCopyVue = document.getElementById("btn-copy-vue-code");
+  const btnCopySvelte = document.getElementById("btn-copy-svelte-code");
   const inputPrompt = document.getElementById("input-ui-prompt");
   const metaBox = document.getElementById("comp-meta-box");
   const iframe = document.getElementById("sandbox-iframe");
   const codeView = document.getElementById("code-export-view");
+  const inputRefine = document.getElementById("input-refine-instruction");
+  const btnRefine = document.getElementById("btn-refine-ui");
+  const refineHistoryBox = document.getElementById("refine-history");
+
+  function renderComponent(data) {
+    currentComponent = data;
+
+    document.getElementById("badge-rendered-id").textContent = data.componentId;
+
+    // Update Meta
+    metaBox.innerHTML = `
+      <strong style="color: #fff;">Component:</strong> ${data.name}<br>
+      <strong style="color: #fff;">Category:</strong> <span style="color: #c084fc; text-transform: uppercase;">${data.category}</span><br>
+      <strong style="color: #fff;">Source:</strong> ${data.generationSource}<br>
+      <strong style="color: #fff;">Frameworks:</strong> React (TSX), Vue 3 SFC, Svelte 5, Standalone HTML5/CSS3<br>
+      <strong style="color: #fff;">Interactivity:</strong> Live State Reactive Events Active
+    `;
+
+    // Render inside Sandboxed Iframe
+    iframe.srcdoc = data.fullBundleHtml;
+
+    // Update Code View
+    codeView.textContent = `// === ⚛️ REACT COMPONENT EXPORT ===\n\n${data.reactCode}\n\n// === 🟩 VUE 3 SFC EXPORT (compiler-verified, see src/vue_exporter.ts) ===\n\n${data.vueCode || "(not generated)"}\n\n// === 🟧 SVELTE 5 COMPONENT EXPORT (compiler-verified, see src/svelte_exporter.ts) ===\n\n${data.svelteCode || "(not generated)"}\n\n// === 🌐 STANDALONE HTML/CSS/JS BUNDLE ===\n\n${data.fullBundleHtml}`;
+
+    // Enable refinement now that there is a component to refine
+    inputRefine.disabled = false;
+    btnRefine.disabled = false;
+  }
 
   async function compileUI(promptText) {
     btnCompile.textContent = "🎨 Generating Interactive Code...";
@@ -47,23 +77,10 @@ function setupGenUIActions() {
         body: JSON.stringify({ prompt: promptText })
       });
       const data = await res.json();
-      currentComponent = data;
-
-      document.getElementById("badge-rendered-id").textContent = data.componentId;
-
-      // Update Meta
-      metaBox.innerHTML = `
-        <strong style="color: #fff;">Component:</strong> ${data.name}<br>
-        <strong style="color: #fff;">Category:</strong> <span style="color: #c084fc; text-transform: uppercase;">${data.category}</span><br>
-        <strong style="color: #fff;">Frameworks:</strong> React (TSX), Standalone HTML5/CSS3<br>
-        <strong style="color: #fff;">Interactivity:</strong> Live State Reactive Events Active
-      `;
-
-      // Render inside Sandboxed Iframe
-      iframe.srcdoc = data.fullBundleHtml;
-
-      // Update Code View
-      codeView.textContent = `// === ⚛️ REACT COMPONENT EXPORT ===\n\n${data.reactCode}\n\n// === 🟩 VUE 3 SFC EXPORT (compiler-verified, see src/vue_exporter.ts) ===\n\n${data.vueCode || "(not generated)"}\n\n// === 🌐 STANDALONE HTML/CSS/JS BUNDLE ===\n\n${data.fullBundleHtml}`;
+      renderComponent(data);
+      // A brand new generation resets the refinement history/chain
+      refinementHistory = [];
+      refineHistoryBox.innerHTML = "";
 
       btnCompile.textContent = "🎨 Generate Interactive Component";
     } catch (e) {
@@ -71,11 +88,51 @@ function setupGenUIActions() {
     }
   }
 
+  async function refineUI(instruction) {
+    if (!currentComponent || !instruction || !instruction.trim()) return;
+    btnRefine.textContent = "🔁 Applying edit to current component...";
+    btnRefine.disabled = true;
+    try {
+      const res = await fetch("/api/genui/refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current: {
+            name: currentComponent.name,
+            category: currentComponent.category,
+            htmlCode: currentComponent.htmlCode,
+            cssCode: currentComponent.cssCode,
+            jsCode: currentComponent.jsCode
+          },
+          instruction
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Refinement failed.");
+      }
+      renderComponent(data);
+      refinementHistory.push(instruction.trim());
+      refineHistoryBox.innerHTML = refinementHistory
+        .map((step, i) => `<div class="refine-step">✓ Step ${i + 1}: ${step}</div>`)
+        .join("");
+      inputRefine.value = "";
+      btnRefine.textContent = "🔁 Apply Refinement to Current Component";
+    } catch (e) {
+      btnRefine.textContent = "⚠️ Refinement failed — see console / ensure Ollama is running";
+      console.error("Refinement error:", e);
+      setTimeout(() => { btnRefine.textContent = "🔁 Apply Refinement to Current Component"; }, 3500);
+    }
+    btnRefine.disabled = false;
+  }
+
   btnCompile?.addEventListener("click", () => compileUI(inputPrompt.value));
   btnPreset?.addEventListener("click", () => {
     inputPrompt.value = "Crea un widget cyberpunk di telemetria GPU/RAM per cluster locale";
     compileUI(inputPrompt.value);
   });
+
+  btnRefine?.addEventListener("click", () => refineUI(inputRefine.value));
 
   btnCopy?.addEventListener("click", () => {
     if (!currentComponent) return;
@@ -87,6 +144,12 @@ function setupGenUIActions() {
     if (!currentComponent || !currentComponent.vueCode) return;
     navigator.clipboard.writeText(currentComponent.vueCode);
     alert("📋 Vue 3 SFC (.vue) copied to clipboard!");
+  });
+
+  btnCopySvelte?.addEventListener("click", () => {
+    if (!currentComponent || !currentComponent.svelteCode) return;
+    navigator.clipboard.writeText(currentComponent.svelteCode);
+    alert("📋 Svelte 5 component (.svelte) copied to clipboard!");
   });
 
   compileUI(inputPrompt.value); // Auto-compile initial mortgage component
