@@ -4,6 +4,8 @@
  * with rich multi-archetype procedural generator for distinct UI outputs.
  */
 
+import { toVueSFC } from "./vue_exporter";
+
 export interface GeneratedUIComponent {
   componentId: string;
   name: string;
@@ -13,6 +15,7 @@ export interface GeneratedUIComponent {
   jsCode: string;
   fullBundleHtml: string;
   reactCode: string;
+  vueCode?: string;
   generationSource: string;
 }
 
@@ -21,6 +24,15 @@ export class GenUICompiler {
   private studioUrl = "http://localhost:3001/api/chat";
 
   public async compileComponent(prompt: string): Promise<GeneratedUIComponent> {
+    const component = await this.compileComponentInner(prompt);
+    // Real Vue 3 SFC export, derived from whatever htmlCode/cssCode/jsCode this
+    // component ended up with (Ollama-generated or procedurally synthesized) —
+    // see src/vue_exporter.ts. Compiler-verified in src/verify_vue_export.ts.
+    component.vueCode = toVueSFC(component);
+    return component;
+  }
+
+  private async compileComponentInner(prompt: string): Promise<GeneratedUIComponent> {
     const trimmed = prompt.trim() || "Calcolatore interattivo";
 
     // 1. Try local Ollama with dynamic model auto-discovery

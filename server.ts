@@ -59,7 +59,7 @@ const server = Bun.serve({
         status: "online",
         version: "1.0.0-genui",
         canvasMode: "single-preview-sandbox",
-        exportEngines: ["React (TSX)", "Standalone HTML5/CSS3/JS"]
+        exportEngines: ["React (TSX)", "Vue 3 SFC (compiler-verified)", "Standalone HTML5/CSS3/JS"]
       }), { headers });
     }
 

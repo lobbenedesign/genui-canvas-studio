@@ -32,6 +32,7 @@ function setupGenUIActions() {
   const btnCompile = document.getElementById("btn-compile-ui");
   const btnPreset = document.getElementById("btn-preset-telemetry");
   const btnCopy = document.getElementById("btn-copy-code");
+  const btnCopyVue = document.getElementById("btn-copy-vue-code");
   const inputPrompt = document.getElementById("input-ui-prompt");
   const metaBox = document.getElementById("comp-meta-box");
   const iframe = document.getElementById("sandbox-iframe");
@@ -62,7 +63,7 @@ function setupGenUIActions() {
       iframe.srcdoc = data.fullBundleHtml;
 
       // Update Code View
-      codeView.textContent = `// === ⚛️ REACT COMPONENT EXPORT ===\n\n${data.reactCode}\n\n// === 🌐 STANDALONE HTML/CSS/JS BUNDLE ===\n\n${data.fullBundleHtml}`;
+      codeView.textContent = `// === ⚛️ REACT COMPONENT EXPORT ===\n\n${data.reactCode}\n\n// === 🟩 VUE 3 SFC EXPORT (compiler-verified, see src/vue_exporter.ts) ===\n\n${data.vueCode || "(not generated)"}\n\n// === 🌐 STANDALONE HTML/CSS/JS BUNDLE ===\n\n${data.fullBundleHtml}`;
 
       btnCompile.textContent = "🎨 Generate Interactive Component";
     } catch (e) {
@@ -80,6 +81,12 @@ function setupGenUIActions() {
     if (!currentComponent) return;
     navigator.clipboard.writeText(currentComponent.reactCode);
     alert("📋 React Component copied to clipboard!");
+  });
+
+  btnCopyVue?.addEventListener("click", () => {
+    if (!currentComponent || !currentComponent.vueCode) return;
+    navigator.clipboard.writeText(currentComponent.vueCode);
+    alert("📋 Vue 3 SFC (.vue) copied to clipboard!");
   });
 
   compileUI(inputPrompt.value); // Auto-compile initial mortgage component

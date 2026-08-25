@@ -23,12 +23,16 @@ export class GenUICompetitorBenchmark {
     return [
       {
         // Honest self-assessment: single active preview pane (no infinite canvas or
-        // multi-component workspace yet), React (TSX) + raw HTML export only (no Vue).
+        // multi-component workspace yet). Export is React (TSX) + a real, compiler-verified
+        // Vue 3 SFC (src/vue_exporter.ts, checked against @vue/compiler-sfc — see
+        // src/verify_vue_export.ts) + raw HTML bundle. The Vue export wraps the generated
+        // markup/JS via v-html + onMounted rather than converting it to idiomatic Vue
+        // reactivity — see the file's doc comment for that limitation.
         name: "🎨 GenUI-Canvas Studio (Our Software)",
         infiniteCanvas: false,
         liveIframeSandbox: true,
         localOfflineRunning: true,
-        exportReactVueHTML: false,
+        exportReactVueHTML: true,
         costMonthly: "$0.00 (Local Bun)",
         multiComponentWorkspace: false
       },

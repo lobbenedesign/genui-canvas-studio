@@ -24,7 +24,7 @@
         <div class="topbar-chips">
           <span class="chip chip-genui">🖼️ Prompt-to-Component Studio</span>
           <span class="chip chip-sandbox">⚡ Live Iframe Sandbox: Active</span>
-          <span class="chip chip-react">⚛️ React (TSX) + HTML Export</span>
+          <span class="chip chip-react">⚛️ React (TSX) + Vue 3 SFC + HTML Export</span>
           <span class="chip chip-competitors">📊 Comparison Table</span>
         </div>
       </div>
@@ -79,7 +79,10 @@
         <div class="panel" style="height: 100%;">
           <div class="panel-header">
             <span class="panel-title">💻 Multi-Framework Source Code Export</span>
-            <button class="btn btn-primary" id="btn-copy-code">📋 Copy React Component</button>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-primary" id="btn-copy-code">📋 Copy React Component</button>
+              <button class="btn btn-primary" id="btn-copy-vue-code" style="background:#42b883;">📋 Copy Vue 3 SFC</button>
+            </div>
           </div>
           <pre class="code-terminal" id="code-export-view">// Source code will appear here...</pre>
         </div>
