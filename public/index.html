@@ -3,113 +3,170 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GenUI-Canvas Studio — Generative UI & Infinite Interactive Canvas</title>
+  <title>GenUI Component Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app-layout">
-    <!-- TOPBAR -->
-    <header class="app-topbar">
-      <div class="topbar-left">
-        <div class="app-logo">
-          <span class="logo-icon">🎨</span>
-          <div class="logo-text">
-            <span class="logo-title">GenUI-Canvas Studio</span>
-            <span class="logo-badge">Infinite Generative Canvas v1.0</span>
-          </div>
-        </div>
-        <div class="topbar-chips">
-          <span class="chip chip-genui">🖼️ Prompt-to-Component Studio</span>
-          <span class="chip chip-sandbox">⚡ Live Iframe Sandbox: Active</span>
-          <span class="chip chip-react">⚛️ React + Vue 3 + Svelte 5 + HTML Export</span>
-          <span class="chip chip-competitors">📊 Comparison Table</span>
-        </div>
+  <div class="app">
+    <!-- HEADER -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">GenUI <span class="logo-accent">Component Studio</span></h1>
+        <span class="version-badge">v2.0</span>
+        <div class="status-dot" id="llm-status" title="LLM Status"></div>
+        <span class="status-text" id="llm-status-text">Checking...</span>
       </div>
-      <div class="topbar-right">
-        <nav class="topbar-tabs">
-          <button class="nav-tab active" data-tab="canvas">🎨 Live Preview</button>
-          <button class="nav-tab" data-tab="code">💻 Source Code & Exporter</button>
-          <button class="nav-tab" data-tab="competitors">📊 Comparison</button>
-        </nav>
+      <div class="header-right">
+        <select id="provider-select" class="provider-select">
+          <option value="ollama">Ollama (Local)</option>
+        </select>
+        <div class="header-tabs">
+          <button class="tab-btn active" data-tab="studio">Studio</button>
+          <button class="tab-btn" data-tab="code">Code</button>
+          <button class="tab-btn" data-tab="library">Library</button>
+          <button class="tab-btn" data-tab="models">🧠 Models</button>
+        </div>
       </div>
     </header>
 
-    <!-- CONTENT -->
-    <main class="app-content">
-      <!-- TAB 1: CANVAS -->
-      <section id="tab-canvas" class="tab-pane active">
-        <div class="genui-layout-grid">
-          <!-- Left: Prompt Generator & Component Selector -->
-          <div class="panel">
-            <div class="panel-header">
-              <span class="panel-title">✨ Generative Prompt Engine</span>
-              <span class="badge-nominal" id="badge-comp-status">Live Interactive</span>
-            </div>
-            <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
-              <label class="form-label">Describe the Interactive UI Component to Generate:</label>
-              <textarea id="input-ui-prompt" class="form-control" rows="3">Crea un calcolatore di mutuo interattivo con slider per gli anni e calcolo rata mensile in tempo reale</textarea>
-              <div style="display: flex; gap: 8px;">
-                <button class="btn btn-primary" id="btn-compile-ui" style="flex: 1;">🎨 Generate Interactive Component</button>
-                <button class="btn btn-preset" id="btn-preset-telemetry">⚡ Telemetry Widget</button>
-              </div>
-            </div>
-            <div class="component-meta-card" id="comp-meta-box">
-              <!-- Dynamically populated -->
-            </div>
-            <div class="panel-header" style="margin-top: 6px;">
-              <span class="panel-title">🔁 Iterative Refinement (real edit, not regeneration)</span>
-            </div>
-            <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
-              <label class="form-label">Give a follow-up instruction to edit the CURRENT component (e.g. "make the button blue", "add a delete button"):</label>
-              <textarea id="input-refine-instruction" class="form-control" rows="2" placeholder="es. rendi lo sfondo del display verde e aggiungi un pulsante Annulla" disabled></textarea>
-              <button class="btn btn-primary" id="btn-refine-ui" style="background:#a855f7;" disabled>🔁 Apply Refinement to Current Component</button>
-              <div id="refine-history" class="refine-history"></div>
+    <!-- STUDIO TAB -->
+    <div class="tab-content active" id="tab-studio">
+      <div class="studio-layout">
+        <!-- LEFT: Prompt & Controls -->
+        <div class="sidebar">
+          <div class="sidebar-section">
+            <label class="label">Describe the component to generate:</label>
+            <textarea id="prompt-input" class="prompt-textarea" rows="4" placeholder="e.g. Interactive mortgage calculator with sliders for years and amount, real-time monthly payment display"></textarea>
+            <button id="btn-generate" class="btn btn-generate">
+              <span class="btn-icon">⚡</span> Generate Component
+            </button>
+          </div>
+
+          <div class="sidebar-section" id="section-refine" style="display:none;">
+            <label class="label">Refine current component:</label>
+            <textarea id="refine-input" class="prompt-textarea" rows="2" placeholder="e.g. make the button green, add a reset button"></textarea>
+            <button id="btn-refine" class="btn btn-refine">🔁 Apply Refinement</button>
+            <div id="refine-history" class="refine-history"></div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="component-info" id="component-info">
+              <p class="info-empty">Generate a component to see details here.</p>
             </div>
           </div>
 
-          <!-- Right: Interactive Live Sandbox Iframe -->
-          <div class="panel">
-            <div class="panel-header">
-              <span class="panel-title">🖥️ Sandboxed Interactive Preview</span>
-              <span class="badge-telemetry" id="badge-rendered-id">COMP-8821</span>
-            </div>
-            <div class="iframe-container">
-              <iframe id="sandbox-iframe" sandbox="allow-scripts allow-modals" srcdoc="<html><body style='background:#070a12;color:#94a3b8;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100%;'>Loading preview...</body></html>"></iframe>
-            </div>
+          <!-- Streaming output -->
+          <div class="sidebar-section" id="section-stream" style="display:none;">
+            <label class="label">LLM Output Stream:</label>
+            <pre class="stream-output" id="stream-output"></pre>
           </div>
         </div>
-      </section>
 
-      <!-- TAB 2: CODE EXPORTER -->
-      <section id="tab-code" class="tab-pane">
-        <div class="panel" style="height: 100%;">
-          <div class="panel-header">
-            <span class="panel-title">💻 Multi-Framework Source Code Export</span>
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-primary" id="btn-copy-code">📋 Copy React Component</button>
-              <button class="btn btn-primary" id="btn-copy-vue-code" style="background:#42b883;">📋 Copy Vue 3 SFC</button>
-              <button class="btn btn-primary" id="btn-copy-svelte-code" style="background:#ff3e00;">📋 Copy Svelte 5 Component</button>
+        <!-- RIGHT: Preview -->
+        <div class="preview-area">
+          <div class="preview-toolbar">
+            <div class="toolbar-group">
+              <button class="tool-btn active" data-theme="dark" title="Dark">🌙</button>
+              <button class="tool-btn" data-theme="light" title="Light">☀️</button>
+              <button class="tool-btn" data-theme="grid" title="Grid">📐</button>
+            </div>
+            <div class="toolbar-group">
+              <button class="tool-btn active" data-vp="100%" title="Desktop">💻 100%</button>
+              <button class="tool-btn" data-vp="768px" title="Tablet">📱 768</button>
+              <button class="tool-btn" data-vp="375px" title="Mobile">📲 375</button>
+            </div>
+            <div class="toolbar-group">
+              <button class="tool-btn" id="btn-save" title="Save to Library" disabled>💾 Save</button>
+              <button class="tool-btn" id="btn-download" title="Download ZIP" disabled>📥 ZIP</button>
+              <button class="tool-btn" id="btn-reload" title="Reload Preview">🔄</button>
             </div>
           </div>
-          <pre class="code-terminal" id="code-export-view">// Source code will appear here...</pre>
+          <div class="canvas-wrapper theme-dark" id="canvas-wrapper">
+            <div class="iframe-frame" id="iframe-frame" style="width:100%;">
+              <iframe id="preview-iframe" sandbox="allow-scripts allow-modals"></iframe>
+            </div>
+          </div>
         </div>
-      </section>
+      </div>
+    </div>
 
-      <!-- TAB 3: 5 COMPETITOR BENCHMARK -->
-      <section id="tab-competitors" class="tab-pane">
-        <div class="panel" style="height: 100%;">
-          <div class="panel-header">
-            <span class="panel-title">📊 Comprehensive Comparison: GenUI-Canvas Studio vs Top 5 Competitors</span>
+    <!-- CODE TAB -->
+    <div class="tab-content" id="tab-code">
+      <div class="code-panel">
+        <div class="code-tabs">
+          <button class="code-tab active" data-lang="html">HTML</button>
+          <button class="code-tab" data-lang="css">CSS</button>
+          <button class="code-tab" data-lang="js">JavaScript</button>
+          <button class="code-tab" data-lang="react">React</button>
+          <button class="code-tab" data-lang="vue">Vue 3</button>
+          <button class="code-tab" data-lang="svelte">Svelte 5</button>
+          <button class="code-tab" data-lang="bundle">Full Bundle</button>
+          <button class="btn-copy" id="btn-copy-code" title="Copy to clipboard">📋 Copy</button>
+        </div>
+        <pre class="code-view"><code id="code-output" class="hljs">// Generate a component first</code></pre>
+      </div>
+    </div>
+
+    <!-- LIBRARY TAB -->
+    <div class="tab-content" id="tab-library">
+      <div class="library-panel">
+        <div class="library-header">
+          <h2>Saved Components</h2>
+          <span class="library-count" id="library-count">0 components</span>
+        </div>
+        <div class="library-grid" id="library-grid">
+          <p class="info-empty">No saved components yet. Generate and save components from the Studio tab.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODELS TAB -->
+    <div class="tab-content" id="tab-models">
+      <div class="models-panel">
+        <!-- Installed Models -->
+        <div class="models-section">
+          <div class="models-section-header">
+            <h2>Installed Models</h2>
+            <span class="models-subtitle" id="ollama-status-text">Checking Ollama...</span>
           </div>
-          <div class="table-container" id="competitor-table-container">
-            <!-- Dynamically populated -->
+          <div class="installed-grid" id="installed-grid">
+            <p class="info-empty">Loading...</p>
           </div>
         </div>
-      </section>
-    </main>
+
+        <!-- Pull Progress -->
+        <div class="models-section" id="pull-progress-section" style="display:none;">
+          <h3>Download Progress</h3>
+          <div class="pull-progress" id="pull-progress">
+            <div class="pull-bar-track">
+              <div class="pull-bar-fill" id="pull-bar-fill" style="width:0%"></div>
+            </div>
+            <span class="pull-status" id="pull-status">Starting...</span>
+          </div>
+        </div>
+
+        <!-- Model Catalog -->
+        <div class="models-section">
+          <div class="models-section-header">
+            <h2>Model Catalog <span class="models-badge">≤16GB VRAM</span></h2>
+            <div class="tier-filter">
+              <button class="tier-btn active" data-tier="all">All</button>
+              <button class="tier-btn" data-tier="light">🟢 Light (≤4GB)</button>
+              <button class="tier-btn" data-tier="medium">🟡 Medium (4-8GB)</button>
+              <button class="tier-btn" data-tier="heavy">🔴 Heavy (8-16GB)</button>
+            </div>
+          </div>
+          <div class="catalog-grid" id="catalog-grid">
+            <p class="info-empty">Loading catalog...</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

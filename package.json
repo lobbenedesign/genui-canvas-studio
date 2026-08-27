@@ -5,7 +5,8 @@
   "type": "module",
   "main": "server.ts",
   "scripts": {
-    "start": "bun server.ts"
+    "start": "bun server.ts",
+    "test": "bun test"
   },
   "dependencies": {},
   "devDependencies": {

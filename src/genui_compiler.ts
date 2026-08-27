@@ -1,7 +1,13 @@
 /**
- * 🎨 REAL Generative UI Compiler & Live Component Generator
- * Auto-detects local Ollama models (llama3.2:3b, qwen2.5:7b, etc.) or Claude Router (port 3001)
- * with rich multi-archetype procedural generator for distinct UI outputs.
+ * GenUI Compiler v2 — Real LLM-powered component generation
+ *
+ * Supports:
+ * - Ollama (local, default)
+ * - Any OpenAI-compatible endpoint (nexus-local-engine, LM Studio, etc.)
+ * - Streaming token callback for SSE
+ *
+ * When NO LLM is available: returns a clearly-labeled DEMO placeholder,
+ * not a fake AI-generated component.
  */
 
 import { toVueSFC } from "./vue_exporter";
@@ -10,7 +16,7 @@ import { toSvelteComponent } from "./svelte_exporter";
 export interface GeneratedUIComponent {
   componentId: string;
   name: string;
-  category: "calculator" | "dashboard" | "form" | "widget" | "chart" | "timer" | "ecommerce" | "kanban" | "game" | "converter";
+  category: string;
   htmlCode: string;
   cssCode: string;
   jsCode: string;
@@ -19,41 +25,135 @@ export interface GeneratedUIComponent {
   vueCode?: string;
   svelteCode?: string;
   generationSource: string;
+  isDemo: boolean;
+  prompt: string;
+  createdAt: string;
 }
+
+interface LLMProvider {
+  id: string;
+  name: string;
+  available: boolean;
+  activeModel?: string;
+}
+
+const SYSTEM_PROMPT = `You are an expert frontend developer. Generate a modern, interactive UI component as a single HTML5/CSS3/JavaScript module.
+
+REQUIREMENTS:
+- Use high-contrast colors: dark backgrounds (#0f172a, #1e293b) with light text (#f8fafc, #e2e8f0)
+- Make buttons styled with distinct colors (#2563eb for primary, #10b981 for success, #ef4444 for danger)
+- Include real interactivity (event listeners, state changes, animations)
+- Use modern CSS: grid, flexbox, border-radius, box-shadow, transitions
+- The component must be self-contained (no external dependencies)
+
+Respond with ONLY a valid JSON object, no explanation text:
+{
+  "name": "Component Name",
+  "category": "widget",
+  "htmlCode": "<div class='card'>...</div>",
+  "cssCode": "body { ... }",
+  "jsCode": "// interactive logic"
+}`;
 
 export class GenUICompiler {
   private ollamaHost = "http://localhost:11434";
-  private studioUrl = "http://localhost:3001/api/chat";
 
-  public async compileComponent(prompt: string): Promise<GeneratedUIComponent> {
-    const component = await this.compileComponentInner(prompt);
-    // Real Vue 3 SFC export, derived from whatever htmlCode/cssCode/jsCode this
-    // component ended up with (Ollama-generated or procedurally synthesized) —
-    // see src/vue_exporter.ts. Compiler-verified in src/verify_vue_export.ts.
-    component.vueCode = toVueSFC(component);
-    // Real Svelte 5 component export, same source data — see src/svelte_exporter.ts.
-    // Compiler-verified in src/verify_svelte_export.ts.
-    component.svelteCode = toSvelteComponent(component);
-    return component;
+  // ── Public API ──
+
+  async checkOllamaAvailable(): Promise<boolean> {
+    return (await this.getAvailableOllamaModel()) !== null;
+  }
+
+  async getActiveModelName(): Promise<string | null> {
+    return this.getAvailableOllamaModel();
+  }
+
+  async getAvailableProviders(): Promise<LLMProvider[]> {
+    const providers: LLMProvider[] = [];
+
+    // Ollama
+    const ollamaModel = await this.getAvailableOllamaModel();
+    providers.push({
+      id: "ollama",
+      name: "Ollama (Local)",
+      available: ollamaModel !== null,
+      activeModel: ollamaModel || undefined,
+    });
+
+    // Nexus Local Engine (port 3000)
+    try {
+      const res = await fetch("http://localhost:3000/v1/models", { signal: AbortSignal.timeout(1500) });
+      if (res.ok) {
+        const data = await res.json();
+        const models = data.data || [];
+        providers.push({
+          id: "nexus",
+          name: "Nexus Local Engine",
+          available: models.length > 0,
+          activeModel: models[0]?.id,
+        });
+      }
+    } catch {}
+
+    // LM Studio (port 1234)
+    try {
+      const res = await fetch("http://localhost:1234/v1/models", { signal: AbortSignal.timeout(1500) });
+      if (res.ok) {
+        const data = await res.json();
+        const models = data.data || [];
+        providers.push({
+          id: "lmstudio",
+          name: "LM Studio",
+          available: models.length > 0,
+          activeModel: models[0]?.id,
+        });
+      }
+    } catch {}
+
+    return providers;
   }
 
   /**
-   * Real iterative refinement, the pattern used by v0.dev and bolt.new: instead of
-   * regenerating a component from scratch, the LLM is given the CURRENT htmlCode/
-   * cssCode/jsCode plus a follow-up instruction ("make the button blue", "add a
-   * delete button") and asked to return the full updated component reflecting only
-   * that edit. This genuinely conditions on the previous output rather than starting
-   * from a blank prompt again.
-   *
-   * Honest constraints:
-   * - This requires a live local Ollama model. There is no procedural-synthesizer
-   *   fallback for refinement (unlike first-time generation) because a fallback here
-   *   could only fake an edit (e.g. via a hardcoded regex for "make it blue"), which
-   *   would not generalize to arbitrary instructions and would misrepresent itself as
-   *   real editing. If no Ollama model is available, this throws instead of pretending.
-   * - Uses the same 45s timeout established for real local generation.
+   * Streaming generation: calls the LLM with stream=true and sends tokens
+   * via the onToken callback. Returns the final parsed component.
    */
-  public async refineComponent(
+  async compileComponentStreaming(
+    prompt: string,
+    provider: string = "ollama",
+    modelOverride: string | null = null,
+    onToken?: (token: string) => void
+  ): Promise<GeneratedUIComponent> {
+    const trimmed = prompt.trim();
+    if (!trimmed) throw new Error("Empty prompt");
+
+    // Try streaming from the appropriate provider
+    if (provider === "ollama") {
+      return this.streamFromOllama(trimmed, modelOverride, onToken);
+    } else {
+      return this.streamFromOpenAICompat(trimmed, provider, modelOverride, onToken);
+    }
+  }
+
+  /**
+   * Non-streaming generation (backward compatible endpoint)
+   */
+  async compileComponent(prompt: string, provider: string = "ollama"): Promise<GeneratedUIComponent> {
+    const trimmed = prompt.trim();
+    if (!trimmed) throw new Error("Empty prompt");
+
+    try {
+      const result = await this.compileComponentStreaming(trimmed, provider);
+      return result;
+    } catch {
+      // No LLM available — return honest demo
+      return this.makeDemoPlaceholder(trimmed);
+    }
+  }
+
+  /**
+   * Iterative refinement — requires live LLM, no fake fallback
+   */
+  async refineComponent(
     current: { name: string; category: string; htmlCode: string; cssCode: string; jsCode: string },
     instruction: string
   ): Promise<GeneratedUIComponent> {
@@ -62,32 +162,28 @@ export class GenUICompiler {
 
     const activeModel = await this.getAvailableOllamaModel();
     if (!activeModel) {
-      throw new Error(
-        "No local Ollama model is available for refinement. Real iterative editing requires a running local model (there is no fake/procedural fallback for edits)."
-      );
+      throw new Error("No LLM available. Real editing requires a running model — there is no fake fallback.");
     }
 
-    const refinePrompt = `Sei un esperto frontend developer. Di seguito trovi un componente HTML5/CSS3/JavaScript GIA' ESISTENTE e un'istruzione di modifica da un utente. Il tuo compito e' applicare SOLO la modifica richiesta, mantenendo intatto tutto il resto della struttura, degli id, delle classi e della logica esistente, a meno che l'istruzione non richieda esplicitamente di cambiarli.
+    const refinePrompt = `You are an expert frontend developer. Below is an existing HTML5/CSS3/JavaScript component and a user's modification instruction. Apply ONLY the requested change, keeping everything else intact.
 
-COMPONENTE ATTUALE (nome: "${current.name}", categoria: "${current.category}"):
+CURRENT COMPONENT (name: "${current.name}", category: "${current.category}"):
 --- HTML ---
 ${current.htmlCode}
 --- CSS ---
 ${current.cssCode}
 --- JS ---
 ${current.jsCode}
---- FINE COMPONENTE ATTUALE ---
 
-ISTRUZIONE DI MODIFICA DELL'UTENTE: "${trimmedInstruction}"
+USER INSTRUCTION: "${trimmedInstruction}"
 
-Rispondi con un JSON valido contenente il componente COMPLETO e AGGIORNATO (non solo il diff):
+Respond with ONLY a valid JSON object containing the complete updated component:
 {
-  "name": "Nome Componente",
-  "category": "calculator|dashboard|form|widget|chart|timer|ecommerce|kanban|game|converter",
-  "htmlCode": "<div class='card'>...</div>",
-  "cssCode": "body { ... }",
-  "jsCode": "...",
-  "reactCode": "export function Component() { ... }"
+  "name": "Component Name",
+  "category": "${current.category}",
+  "htmlCode": "<complete updated html>",
+  "cssCode": "<complete updated css>",
+  "jsCode": "<complete updated js>"
 }`;
 
     const res = await fetch(`${this.ollamaHost}/api/generate`, {
@@ -97,127 +193,157 @@ Rispondi con un JSON valido contenente il componente COMPLETO e AGGIORNATO (non 
         model: activeModel,
         prompt: refinePrompt,
         stream: false,
-        format: "json"
+        format: "json",
       }),
-      signal: AbortSignal.timeout(45000)
+      signal: AbortSignal.timeout(60000),
     });
 
-    if (!res.ok) {
-      throw new Error(`Ollama refinement request failed with status ${res.status}.`);
-    }
+    if (!res.ok) throw new Error(`Ollama returned status ${res.status}`);
 
     const data = await res.json();
     const parsed = JSON.parse(data.response || "{}");
     if (!parsed.htmlCode || !parsed.cssCode) {
-      throw new Error("Ollama returned an incomplete refinement (missing htmlCode/cssCode).");
+      throw new Error("LLM returned incomplete refinement (missing htmlCode/cssCode).");
     }
 
-    const bundle = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${parsed.cssCode}</style></head><body>${parsed.htmlCode}<script>${parsed.jsCode || ""}<\/script></body></html>`;
-    const refined: GeneratedUIComponent = {
-      componentId: `COMP-${Date.now().toString().slice(-4)}`,
-      name: parsed.name || current.name,
-      category: parsed.category || (current.category as any) || "widget",
-      htmlCode: parsed.htmlCode,
-      cssCode: parsed.cssCode,
-      jsCode: parsed.jsCode || "",
-      fullBundleHtml: bundle,
-      reactCode: parsed.reactCode || `export function CustomUI() { return <div>${parsed.name || current.name}</div>; }`,
-      generationSource: `Local Ollama (${activeModel}) — refined: "${trimmedInstruction.slice(0, 60)}"`
-    };
-    refined.vueCode = toVueSFC(refined);
-    refined.svelteCode = toSvelteComponent(refined);
-    return refined;
+    return this.buildComponent(parsed, `Ollama (${activeModel}) — refined: "${trimmedInstruction.slice(0, 60)}"`, trimmedInstruction, false);
   }
 
-  private async compileComponentInner(prompt: string): Promise<GeneratedUIComponent> {
-    const trimmed = prompt.trim() || "Calcolatore interattivo";
+  // ── Private: Streaming Implementations ──
 
-    // 1. Try local Ollama with dynamic model auto-discovery
-    try {
-      const activeModel = await this.getAvailableOllamaModel();
-      if (activeModel) {
-        const systemPrompt = `Sei un esperto frontend developer. Genera un'interfaccia web HTML5/CSS3/JavaScript per: "${trimmed}".
-Rispondi con un JSON valido:
-{
-  "name": "Nome Componente",
-  "category": "calculator|dashboard|form|widget|chart|timer|ecommerce|kanban|game|converter",
-  "htmlCode": "<div class='card'>...</div>",
-  "cssCode": "body { ... }",
-  "jsCode": "...",
-  "reactCode": "export function Component() { ... }"
-}`;
+  private async streamFromOllama(
+    prompt: string,
+    modelOverride: string | null,
+    onToken?: (token: string) => void
+  ): Promise<GeneratedUIComponent> {
+    const model = modelOverride || (await this.getAvailableOllamaModel());
+    if (!model) {
+      throw new Error("No Ollama model available. Start Ollama and pull a model first.");
+    }
 
-        const res = await fetch(`${this.ollamaHost}/api/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: activeModel,
-            prompt: systemPrompt,
-            stream: false,
-            format: "json"
-          }),
-          signal: AbortSignal.timeout(45000)
-        });
+    const fullPrompt = `${SYSTEM_PROMPT}\n\nUser request: "${prompt}"`;
 
+    const res = await fetch(`${this.ollamaHost}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: fullPrompt,
+        stream: true,
+        format: "json",
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!res.ok) throw new Error(`Ollama returned status ${res.status}`);
+
+    // Read streaming NDJSON
+    let fullResponse = "";
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      // Ollama streams NDJSON — each line is a JSON object with a "response" field
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj.response) {
+            fullResponse += obj.response;
+            onToken?.(obj.response);
+          }
+        } catch {}
+      }
+    }
+
+    const parsed = this.parseJSONResponse(fullResponse);
+    if (!parsed.htmlCode) {
+      throw new Error("LLM returned invalid JSON (no htmlCode found).");
+    }
+
+    return this.buildComponent(parsed, `Ollama (${model})`, prompt, false);
+  }
+
+  private async streamFromOpenAICompat(
+    prompt: string,
+    provider: string,
+    modelOverride: string | null,
+    onToken?: (token: string) => void
+  ): Promise<GeneratedUIComponent> {
+    const endpoints: Record<string, string> = {
+      nexus: "http://localhost:3000/v1/chat/completions",
+      lmstudio: "http://localhost:1234/v1/chat/completions",
+    };
+
+    const baseUrl = endpoints[provider];
+    if (!baseUrl) throw new Error(`Unknown provider: ${provider}`);
+
+    // Auto-detect model if not specified
+    let model = modelOverride;
+    if (!model) {
+      const modelsUrl = baseUrl.replace("/chat/completions", "/models");
+      try {
+        const res = await fetch(modelsUrl, { signal: AbortSignal.timeout(2000) });
         if (res.ok) {
           const data = await res.json();
-          const parsed = JSON.parse(data.response || "{}");
-          if (parsed.htmlCode && parsed.cssCode) {
-            const bundle = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${parsed.cssCode}</style></head><body>${parsed.htmlCode}<script>${parsed.jsCode || ""}<\/script></body></html>`;
-            return {
-              componentId: `COMP-${Date.now().toString().slice(-4)}`,
-              name: parsed.name || "AI Generated UI",
-              category: parsed.category || "widget",
-              htmlCode: parsed.htmlCode,
-              cssCode: parsed.cssCode,
-              jsCode: parsed.jsCode || "",
-              fullBundleHtml: bundle,
-              reactCode: parsed.reactCode || `export function CustomUI() { return <div>${parsed.name}</div>; }`,
-              generationSource: `Local Ollama (${activeModel})`
-            };
-          }
+          model = data.data?.[0]?.id;
         }
-      }
-    } catch {}
+      } catch {}
+    }
+    if (!model) throw new Error(`No model available on ${provider}`);
 
-    // 2. Try Claude Local Studio router (Port 3001)
-    try {
-      const res = await fetch(this.studioUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: `Genera componente HTML/CSS/JS JSON per: ${trimmed}` }],
-          temperature: 0.3
-        }),
-        signal: AbortSignal.timeout(4000)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.content || data.choices?.[0]?.message?.content || "";
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) {
-          const parsed = JSON.parse(match[0]);
-          if (parsed.htmlCode) {
-            const bundle = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${parsed.cssCode || ""}</style></head><body>${parsed.htmlCode}<script>${parsed.jsCode || ""}<\/script></body></html>`;
-            return {
-              componentId: `COMP-${Date.now().toString().slice(-4)}`,
-              name: parsed.name || "Claude Router UI",
-              category: parsed.category || "widget",
-              htmlCode: parsed.htmlCode,
-              cssCode: parsed.cssCode || "",
-              jsCode: parsed.jsCode || "",
-              fullBundleHtml: bundle,
-              reactCode: parsed.reactCode || "export function CustomUI() {}",
-              generationSource: "Claude Router (Port 3001)"
-            };
+    const res = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        stream: true,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!res.ok) throw new Error(`${provider} returned status ${res.status}`);
+
+    let fullResponse = "";
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n").filter((l) => l.startsWith("data: "));
+      for (const line of lines) {
+        const data = line.slice(6);
+        if (data === "[DONE]") break;
+        try {
+          const obj = JSON.parse(data);
+          const token = obj.choices?.[0]?.delta?.content || "";
+          if (token) {
+            fullResponse += token;
+            onToken?.(token);
           }
-        }
+        } catch {}
       }
-    } catch {}
+    }
 
-    // 3. Multi-Archetype Dynamic Procedural Synthesizer
-    return this.synthesizeMultiArchetypeUI(trimmed);
+    const parsed = this.parseJSONResponse(fullResponse);
+    if (!parsed.htmlCode) throw new Error("LLM returned invalid JSON (no htmlCode found).");
+
+    return this.buildComponent(parsed, `${provider} (${model})`, prompt, false);
   }
+
+  // ── Private: Helpers ──
 
   private async getAvailableOllamaModel(): Promise<string | null> {
     try {
@@ -226,8 +352,9 @@ Rispondi con un JSON valido:
         const data = await res.json();
         const models: any[] = data.models || [];
         if (models.length > 0) {
-          // Prioritize fast instruction models
-          const preferred = models.find(m => m.name.includes("llama3.2") || m.name.includes("qwen") || m.name.includes("granite"));
+          const preferred = models.find(
+            (m) => m.name.includes("llama3") || m.name.includes("qwen") || m.name.includes("granite") || m.name.includes("codestral") || m.name.includes("deepseek")
+          );
           return preferred ? preferred.name : models[0].name;
         }
       }
@@ -235,188 +362,159 @@ Rispondi con un JSON valido:
     return null;
   }
 
-  /**
-   * Generates completely distinct DOM structures, layouts, and JS logic based on problem domain
-   */
-  private synthesizeMultiArchetypeUI(prompt: string): GeneratedUIComponent {
-    const id = `COMP-${Date.now().toString().slice(-4)}`;
-    const lower = prompt.toLowerCase();
+  private parseJSONResponse(raw: string): any {
+    // Try direct parse
+    try {
+      return JSON.parse(raw);
+    } catch {}
 
-    // Archetype A: Calculator / Currency / Math Converter
-    if (lower.includes("calc") || lower.includes("somm") || lower.includes("convert") || lower.includes("eur") || lower.includes("usd")) {
-      const html = `<div class="app-calc">
-  <h2>🧮 Calcolatore Dinamico</h2>
-  <div class="display" id="calc-disp">0</div>
-  <div class="keypad">
-    <button class="btn num">7</button><button class="btn num">8</button><button class="btn num">9</button><button class="btn op">/</button>
-    <button class="btn num">4</button><button class="btn num">5</button><button class="btn num">6</button><button class="btn op">*</button>
-    <button class="btn num">1</button><button class="btn num">2</button><button class="btn num">3</button><button class="btn op">-</button>
-    <button class="btn clear">C</button><button class="btn num">0</button><button class="btn eq">=</button><button class="btn op">+</button>
-  </div>
-</div>`;
-      const css = `body{background:#0f172a;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}
-.app-calc{background:#1e293b;padding:24px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.5);width:280px;}
-.display{background:#090d16;padding:16px;font-size:28px;text-align:right;border-radius:8px;margin-bottom:16px;font-family:monospace;color:#38bdf8;overflow:hidden;}
-.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
-.btn{padding:14px;font-size:16px;font-weight:700;border:none;border-radius:8px;background:#334155;color:#fff;cursor:pointer;}
-.btn.op{background:#0284c7;color:#fff;}
-.btn.eq{background:#10b981;color:#fff;}
-.btn.clear{background:#ef4444;color:#fff;}`;
-      const js = `let exp = "";
-const d = document.getElementById("calc-disp");
-document.querySelectorAll(".btn").forEach(b => {
-  b.addEventListener("click", () => {
-    const t = b.textContent;
-    if (t === "C") { exp = ""; d.textContent = "0"; }
-    else if (t === "=") { try { exp = eval(exp).toString(); d.textContent = exp; } catch { d.textContent = "Error"; exp = ""; } }
-    else { exp += t; d.textContent = exp; }
-  });
-});`;
-      return {
-        componentId: id,
-        name: "Calcolatore Interattivo",
-        category: "calculator",
-        htmlCode: html,
-        cssCode: css,
-        jsCode: js,
-        fullBundleHtml: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`,
-        reactCode: `export function Calculator() { return <div className="calc">Calculator UI</div>; }`,
-        generationSource: "Dynamic Procedural Synthesizer (Calculator Archetype)"
-      };
+    // Extract JSON from markdown code blocks or surrounding text
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch {}
     }
 
-    // Archetype B: Timer / Stopwatch / Pomodoro
-    if (lower.includes("timer") || lower.includes("cronometr") || lower.includes("stopwatch") || lower.includes("pomodoro")) {
-      const html = `<div class="timer-card">
-  <h2>⏱️ Cronometro di Precisione</h2>
-  <div class="time-display" id="timer-val">00:00.00</div>
-  <div class="timer-controls">
-    <button id="start-btn" class="t-btn start">Avvia</button>
-    <button id="reset-btn" class="t-btn reset">Reset</button>
-  </div>
-</div>`;
-      const css = `body{background:#030712;color:#f9fafb;font-family:system-ui;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}
-.timer-card{background:#111827;border:1px solid #1f2937;padding:32px;border-radius:20px;text-align:center;width:320px;}
-.time-display{font-size:42px;font-weight:800;font-family:monospace;color:#a855f7;margin:24px 0;}
-.timer-controls{display:flex;gap:12px;justify-content:center;}
-.t-btn{padding:12px 24px;border-radius:10px;font-weight:700;border:none;cursor:pointer;}
-.t-btn.start{background:#a855f7;color:#fff;}
-.t-btn.reset{background:#374151;color:#d1d5db;}`;
-      const js = `let startTime = 0, elapsed = 0, timerId = null;
-const disp = document.getElementById("timer-val");
-const sBtn = document.getElementById("start-btn");
-const rBtn = document.getElementById("reset-btn");
-function update() {
-  const diff = Date.now() - startTime + elapsed;
-  const m = Math.floor(diff / 60000).toString().padStart(2, '0');
-  const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
-  const ms = Math.floor((diff % 1000) / 10).toString().padStart(2, '0');
-  disp.textContent = m + ":" + s + "." + ms;
-}
-sBtn.addEventListener("click", () => {
-  if (!timerId) {
-    startTime = Date.now();
-    timerId = setInterval(update, 30);
-    sBtn.textContent = "Pausa";
-    sBtn.style.background = "#f59e0b";
-  } else {
-    clearInterval(timerId);
-    elapsed += Date.now() - startTime;
-    timerId = null;
-    sBtn.textContent = "Riprendi";
-    sBtn.style.background = "#a855f7";
+    return {};
   }
-});
-rBtn.addEventListener("click", () => {
-  clearInterval(timerId);
-  timerId = null;
-  elapsed = 0;
-  disp.textContent = "00:00.00";
-  sBtn.textContent = "Avvia";
-  sBtn.style.background = "#a855f7";
-});`;
-      return {
-        componentId: id,
-        name: "Cronometro ad Alta Precisione",
-        category: "timer",
-        htmlCode: html,
-        cssCode: css,
-        jsCode: js,
-        fullBundleHtml: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`,
-        reactCode: `export function Timer() { return <div className="timer">Timer UI</div>; }`,
-        generationSource: "Dynamic Procedural Synthesizer (Timer Archetype)"
-      };
-    }
 
-    // Archetype C: Form / Lead Registration
-    if (lower.includes("form") || lower.includes("registraz") || lower.includes("login") || lower.includes("contatt")) {
-      const html = `<div class="form-box">
-  <h3>📝 Modulo di Contatto & Registrazione</h3>
-  <form id="contact-form">
-    <div class="field"><label>Nome Completo</label><input type="text" required placeholder="Mario Rossi"></div>
-    <div class="field"><label>Email</label><input type="email" required placeholder="mario@example.com"></div>
-    <div class="field"><label>Messaggio</label><textarea rows="3" placeholder="Scrivi qui..."></textarea></div>
-    <button type="submit" class="submit-btn">Invia Dati</button>
-  </form>
-  <div id="form-msg" class="msg hidden">✓ Messaggio inviato con successo!</div>
-</div>`;
-      const css = `body{background:#040d21;color:#e2e8f0;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}
-.form-box{background:#0b192c;border:1px solid #1e3e62;padding:28px;border-radius:14px;width:340px;}
-.field{margin-bottom:14px;}
-label{display:block;font-size:12px;margin-bottom:4px;color:#94a3b8;}
-input,textarea{width:100%;box-sizing:border-box;background:#00000040;border:1px solid #1e3e62;color:#fff;padding:8px 12px;border-radius:6px;}
-.submit-btn{width:100%;padding:10px;background:#008dda;color:#fff;font-weight:700;border:none;border-radius:6px;cursor:pointer;margin-top:8px;}
-.msg{margin-top:12px;padding:8px;background:#064e3b;color:#34d399;border-radius:6px;font-size:13px;text-align:center;}
-.hidden{display:none;}`;
-      const js = `document.getElementById("contact-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  document.getElementById("form-msg").classList.remove("hidden");
-});`;
-      return {
-        componentId: id,
-        name: "Modulo Registrazione",
-        category: "form",
-        htmlCode: html,
-        cssCode: css,
-        jsCode: js,
-        fullBundleHtml: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`,
-        reactCode: `export function ContactForm() { return <form>Contact Form</form>; }`,
-        generationSource: "Dynamic Procedural Synthesizer (Form Archetype)"
-      };
-    }
-
-    // Default Archetype D: Interactive Dashboard & Task Counter
-    const html = `<div class="dash-card">
-  <h3>📊 Telemetria & Task Monitor: ${prompt.slice(0, 30)}</h3>
-  <div class="metric-row">
-    <div class="m-card"><span>Attività</span><strong id="counter-val">0</strong></div>
-    <div class="m-card"><span>Stato</span><strong class="green">ATTIVO</strong></div>
-  </div>
-  <button id="add-btn" class="plus-btn">+ Incrementa Task</button>
-</div>`;
-    const css = `body{background:#0a0a0c;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;}
-.dash-card{background:#18181b;border:1px solid #27272a;padding:24px;border-radius:14px;width:320px;text-align:center;}
-.metric-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0;}
-.m-card{background:#09090b;padding:12px;border-radius:8px;}
-.m-card span{font-size:11px;color:#a1a1aa;display:block;}
-.m-card strong{font-size:20px;color:#38bdf8;}
-.m-card strong.green{color:#22c55e;}
-.plus-btn{width:100%;padding:10px;background:#38bdf8;color:#000;font-weight:700;border:none;border-radius:8px;cursor:pointer;}`;
-    const js = `let count = 0;
-document.getElementById("add-btn").addEventListener("click", () => {
-  count++;
-  document.getElementById("counter-val").textContent = count;
-});`;
-    return {
-      componentId: id,
-      name: `Dashboard ${prompt.slice(0, 20)}`,
-      category: "dashboard",
-      htmlCode: html,
-      cssCode: css,
-      jsCode: js,
-      fullBundleHtml: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`,
-      reactCode: `export function Dashboard() { return <div>Dashboard</div>; }`,
-      generationSource: "Dynamic Procedural Synthesizer (Dashboard Archetype)"
+  private buildComponent(
+    parsed: any,
+    source: string,
+    prompt: string,
+    isDemo: boolean
+  ): GeneratedUIComponent {
+    const component: GeneratedUIComponent = {
+      componentId: `COMP-${Date.now().toString(36).toUpperCase()}`,
+      name: parsed.name || "Generated Component",
+      category: parsed.category || "widget",
+      htmlCode: parsed.htmlCode || "",
+      cssCode: parsed.cssCode || "",
+      jsCode: parsed.jsCode || "",
+      fullBundleHtml: this.buildFullBundleHtml(parsed.htmlCode || "", parsed.cssCode || "", parsed.jsCode),
+      reactCode: parsed.reactCode || this.generateReactWrapper(parsed),
+      generationSource: source,
+      isDemo,
+      prompt,
+      createdAt: new Date().toISOString(),
     };
+    component.vueCode = toVueSFC(component);
+    component.svelteCode = toSvelteComponent(component);
+    return component;
+  }
+
+  private generateReactWrapper(parsed: any): string {
+    const name = (parsed.name || "GeneratedComponent")
+      .replace(/[^a-zA-Z0-9 ]/g, "")
+      .split(/\s+/)
+      .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join("");
+    return `import React, { useEffect, useRef } from 'react';
+
+export function ${name || "GeneratedComponent"}() {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    ${parsed.jsCode ? `// Original generated logic\n    ${parsed.jsCode.split("\n").join("\n    ")}` : "// No interactive logic generated"}
+  }, []);
+
+  return (
+    <>
+      <style>{\`${(parsed.cssCode || "").replace(/`/g, "\\`")}\`}</style>
+      <div ref={containerRef} dangerouslySetInnerHTML={{ __html: \`${(parsed.htmlCode || "").replace(/`/g, "\\`")}\` }} />
+    </>
+  );
+}`;
+  }
+
+  public buildFullBundleHtml(htmlCode: string, cssCode: string, jsCode?: string): string {
+    const baseReset = `
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0; min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+        background-color: #0f172a; color: #f8fafc;
+        display: flex; justify-content: center; align-items: center;
+        -webkit-font-smoothing: antialiased;
+      }
+      input, button, select, textarea { font-family: inherit; font-size: 14px; color: inherit; }
+      button {
+        cursor: pointer; border-radius: 8px; padding: 9px 16px; font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.15); background: #2563eb; color: #ffffff;
+        transition: all 0.15s ease;
+      }
+      button:hover:not(:disabled) { background: #1d4ed8; box-shadow: 0 0 12px rgba(37,99,235,0.4); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      input[type="text"], input[type="number"], input[type="email"], input[type="password"],
+      input[type="range"], textarea, select {
+        background: #1e293b; border: 1px solid #334155; color: #f8fafc;
+        border-radius: 8px; padding: 9px 12px; outline: none;
+      }
+      input:focus, textarea:focus, select:focus {
+        border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.25);
+      }
+      .card, .container, .box, [class*="card"], [class*="container"],
+      [class*="timer"], [class*="calc"], [class*="widget"] {
+        background: #1e293b; border: 1px solid #334155; border-radius: 14px;
+        padding: 24px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5);
+      }
+    `;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    ${baseReset}
+    ${cssCode || ""}
+  </style>
+</head>
+<body>
+  ${htmlCode || ""}
+  <script>
+    try {
+      ${jsCode || ""}
+    } catch(err) {
+      console.error("GenUI runtime error:", err);
+    }
+  <\/script>
+</body>
+</html>`;
+  }
+
+  /**
+   * Honest demo placeholder when no LLM is available.
+   * Clearly labeled as NOT AI-generated.
+   */
+  private makeDemoPlaceholder(prompt: string): GeneratedUIComponent {
+    const html = `<div class="demo-notice">
+  <div class="demo-badge">⚠️ DEMO MODE</div>
+  <h2>No LLM Available</h2>
+  <p>This is a static placeholder — not generated by AI.</p>
+  <p class="prompt-echo">Your prompt: "${prompt.slice(0, 100)}"</p>
+  <div class="demo-instructions">
+    <p>To generate real UI components, start a local LLM:</p>
+    <code>ollama run llama3.2:3b</code>
+    <p>or</p>
+    <code>ollama run qwen2.5-coder:7b</code>
+  </div>
+</div>`;
+    const css = `.demo-notice{text-align:center;max-width:420px;padding:32px;}
+.demo-badge{display:inline-block;background:#f59e0b;color:#000;font-weight:700;padding:4px 12px;border-radius:6px;font-size:12px;margin-bottom:16px;letter-spacing:1px;}
+h2{margin:0 0 8px;font-size:20px;color:#f8fafc;}
+p{color:#94a3b8;font-size:14px;margin:4px 0;}
+.prompt-echo{color:#38bdf8;font-style:italic;margin:12px 0;}
+.demo-instructions{margin-top:20px;background:#0f172a;padding:16px;border-radius:10px;border:1px solid #334155;}
+.demo-instructions p{color:#94a3b8;font-size:13px;}
+code{display:block;background:#1e293b;color:#38bdf8;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:13px;margin:6px 0;}`;
+
+    return this.buildComponent(
+      { name: "Demo Placeholder", category: "widget", htmlCode: html, cssCode: css, jsCode: "" },
+      "DEMO MODE — No LLM running",
+      prompt,
+      true
+    );
   }
 }
